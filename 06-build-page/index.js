@@ -1,11 +1,5 @@
-const fs = require('fs');
-const fsp = require('fs').promises;
+const fs = require('fs').promises;
 const path = require('path');
-const util = require('util');
-
-const readdir = util.promisify(fs.readdir);
-const readFile = util.promisify(fs.readFile);
-const writeFile = util.promisify(fs.writeFile);
 
 const templatePath = path.join(__dirname, 'template.html');
 const componentsPath = path.join(__dirname, 'components');
@@ -13,21 +7,17 @@ const stylesPath = path.join(__dirname, 'styles');
 const assetsPath = path.join(__dirname, 'assets');
 const distPath = path.join(__dirname, 'project-dist');
 
-if (!fs.existsSync(distPath)) {
-  fs.mkdirSync(distPath);
-}
-
 // копирования файлов
 async function copyDir(src, dest) {
-  await fsp.mkdir(dest, { recursive: true });
+  await fs.mkdir(dest, { recursive: true });
 
-  const entries = await fsp.readdir(src, { withFileTypes: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
 
   for (let entry of entries) {
     if (entry.isDirectory()) {
       await copyDir(path.join(src, entry.name), path.join(dest, entry.name));
     } else {
-      await fsp.copyFile(
+      await fs.copyFile(
         path.join(src, entry.name),
         path.join(dest, entry.name),
       );
@@ -35,60 +25,43 @@ async function copyDir(src, dest) {
   }
 }
 
-let template = fs.readFileSync(templatePath, 'utf8');
+fs.mkdir(distPath, { recursive: true })
+  .then(() => fs.readFile(templatePath, 'utf8'))
+  .then((template) => {
+    // чтение components
+    return fs.readdir(componentsPath).then((files) => {
+      files = files.filter((file) => path.extname(file) === '.html');
 
-// чтение components
-let files;
-readdir(componentsPath)
-  .then((_files) => {
-    files = _files.filter((file) => path.extname(file) === '.html');
+      let promises = files.map((file) =>
+        fs.readFile(path.join(componentsPath, file), 'utf8'),
+      );
 
-    let promises = files.map((file) =>
-      readFile(path.join(componentsPath, file), 'utf8'),
-    );
+      return Promise.all(promises).then((components) => {
+        components.forEach((component, i) => {
+          let tagName = path.basename(files[i], '.html');
+          let regex = new RegExp(`{{${tagName}}}`, 'g');
+          template = template.replace(regex, component);
+        });
 
-    return Promise.all(promises);
-  })
-  .then((components) => {
-    components.forEach((component, i) => {
-      let tagName = path.basename(files[i], '.html');
-      let regex = new RegExp(`{{${tagName}}}`, 'g');
-      template = template.replace(regex, component);
+        // запись измененного шаблона в файл index.html
+        return fs.writeFile(path.join(distPath, 'index.html'), template);
+      });
     });
-
-    // запись измененного шаблона в файл index.html
-    return writeFile(path.join(distPath, 'index.html'), template);
   })
   .then(() => {
-    return readdir(stylesPath);
+    return fs.readdir(stylesPath);
   })
-  .then((_files) => {
+  .then((files) => {
     // фильтрация файлов с расширением .css
-    files = _files.filter((file) => path.extname(file) === '.css');
+    files = files.filter((file) => path.extname(file) === '.css');
 
     // объединение стилей в 1 файл
-    let styles = [];
-    files.forEach((file) => {
-      fs.readFile(path.join(stylesPath, file), 'utf8', (err, data) => {
-        if (err) {
-          console.error(`Error reading file ${file}: ${err}`);
-          return;
-        }
+    let promises = files.map((file) =>
+      fs.readFile(path.join(stylesPath, file), 'utf8'),
+    );
 
-        styles.push(data);
-
-        if (styles.length === files.length) {
-          fs.writeFile(
-            path.join(distPath, 'style.css'),
-            styles.join('\n'),
-            (err) => {
-              if (err) {
-                console.error(`Error writing output file: ${err}`);
-              }
-            },
-          );
-        }
-      });
+    return Promise.all(promises).then((styles) => {
+      return fs.writeFile(path.join(distPath, 'style.css'), styles.join('\n'));
     });
   })
   .then(() => {
